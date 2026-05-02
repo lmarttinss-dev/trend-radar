@@ -194,6 +194,7 @@ function collectFromNetwork(page, limit) {
             url: `https://www.tiktok.com/@${item?.author?.uniqueId}/video/${item?.id}`,
             views: String(item?.stats?.playCount ?? item?.stats?.vvCount ?? ''),
             likes: String(item?.stats?.diggCount ?? ''),
+            createTime: item?.createTime ?? null,
           });
         }
 
@@ -239,11 +240,10 @@ async function extractFromPageData(page) {
 
       return itemList.map((item) => ({
         descricao: item?.desc || item?.contents?.[0]?.desc || '',
-        url: item?.video?.playAddr
-          ? `https://www.tiktok.com/@${item?.author?.uniqueId}/video/${item?.id}`
-          : `https://www.tiktok.com/@${item?.author?.uniqueId}/video/${item?.id}`,
+        url: `https://www.tiktok.com/@${item?.author?.uniqueId}/video/${item?.id}`,
         views: String(item?.stats?.playCount ?? item?.stats?.vvCount ?? ''),
         likes: String(item?.stats?.diggCount ?? ''),
+        createTime: item?.createTime ?? null,
       }));
     });
 

@@ -57,13 +57,14 @@ function buildHashtagSection(hashtag, videos) {
   const sorted = [...videos].sort((a, b) => b.score - a.score);
 
   lines.push('### Vídeos');
-  lines.push('| # | Produto / Descrição | Views | Likes | Engaj. | Score | Viabilidade | Link |');
-  lines.push('|---|---|---:|---:|---:|---:|---|---|');
+  lines.push('| # | Produto / Descrição | Publicado | Views | Likes | Engaj. | Score | Viabilidade | Link |');
+  lines.push('|---|---|---|---:|---:|---:|---:|---|---|');
 
   sorted.forEach((v, i) => {
     const produto = v.produto.replace(/\|/g, '\\|').substring(0, 55);
+    const idade = v.idadeDias !== null ? `${v.dataPublicacao} (${v.idadeDias}d)` : v.dataPublicacao;
     lines.push(
-      `| ${i + 1} | ${produto} | ${fmtNum(v.viewsNum)} | ${fmtNum(v.likesNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) |`
+      `| ${i + 1} | ${produto} | ${idade} | ${fmtNum(v.viewsNum)} | ${fmtNum(v.likesNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) |`
     );
   });
 
@@ -91,13 +92,14 @@ function buildTop5Section(analyzedResults) {
   const lines = [];
   lines.push('## 🏆 Top 5 Oportunidades de Revenda\n');
   lines.push('> Vídeos com maior score consolidado entre todas as hashtags.\n');
-  lines.push('| Rank | Produto / Descrição | Hashtag | Views | Engaj. | Score | Viabilidade | Link |');
-  lines.push('|---:|---|---|---:|---:|---:|---|---|');
+  lines.push('| Rank | Produto / Descrição | Hashtag | Publicado | Views | Engaj. | Score | Viabilidade | Link |');
+  lines.push('|---:|---|---|---|---:|---:|---:|---|---|');
 
   top5.forEach((v, i) => {
     const produto = v.produto.replace(/\|/g, '\\|').substring(0, 55);
+    const idade = v.idadeDias !== null ? `${v.dataPublicacao} (${v.idadeDias}d)` : v.dataPublicacao;
     lines.push(
-      `| ${i + 1} | ${produto} | #${v.hashtag} | ${fmtNum(v.viewsNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) |`
+      `| ${i + 1} | ${produto} | #${v.hashtag} | ${idade} | ${fmtNum(v.viewsNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) |`
     );
   });
 
@@ -146,9 +148,10 @@ function generateReport(analyzedResults) {
   lines.push('O score (0–100) é calculado de forma heurística, sem IA:\n');
   lines.push('| Componente | Peso | Critério |');
   lines.push('|---|---:|---|');
-  lines.push('| Views score | 50 pts | Escala logarítmica — 1M views ≈ 50 pts |');
-  lines.push('| Engagement rate | 30 pts | likes ÷ views — 5%+ = máximo |');
-  lines.push('| Intenção de compra | 20 pts | Keywords na descrição (amazon, link, haul…) |');
+  lines.push('| Views score | 40 pts | Escala logarítmica — 1M views ≈ 40 pts |');
+  lines.push('| Engagement rate | 25 pts | likes ÷ views — 5%+ = máximo |');
+  lines.push('| Intenção de compra | 15 pts | Keywords na descrição (amazon, link, haul…) |');
+  lines.push('| Recência | 20 pts | < 30d = 20 · 30–90d = 15 · 90–180d = 10 · 180–365d = 5 · > 365d = 0 |');
   lines.push('');
   lines.push('**Classificação:** 🟢 Alto ≥ 70 pts · 🟡 Médio 40–69 pts · 🔴 Baixo < 40 pts');
   lines.push('');
