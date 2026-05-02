@@ -1,0 +1,12 @@
+{
+  "name": "trend-radar",
+  "version": "1.0.0",
+  "description": "TikTok viral videos scraper using Playwright",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0"
+  }
+}
