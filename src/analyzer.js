@@ -1,7 +1,7 @@
 /**
  * analyzer.js
  * Análise heurística de viabilidade de revenda para cada vídeo coletado.
- * Score 0–100 sem uso de IA — baseado em views, engajamento e intenção de compra.
+ * Score 0–100 sem uso de IA — baseado em views, engajamento, intenção de compra e recência.
  */
 
 // Palavras-chave que indicam intenção de compra / produto à venda
@@ -33,21 +33,20 @@ function parseMetric(value) {
 }
 
 /**
- * Calcula score de views (0–50).
- * Usa escala logarítmica: 1M views → ~50pts, 100K → ~35pts, 10K → ~20pts.
+ * Calcula score de views (0–40).
+ * Usa escala logarítmica: 1M views → ~40pts, 100K → ~27pts, 10K → ~13pts.
  *
  * @param {number} views
  * @returns {number}
  */
 function viewsScore(views) {
   if (views <= 0) return 0;
-  // log10(1M) = 6 → 50pts; log10(1K) = 3 → 25pts; capped em 50
-  const score = (Math.log10(views) / 6) * 50;
-  return Math.min(50, Math.max(0, Math.round(score)));
+  const score = (Math.log10(views) / 6) * 40;
+  return Math.min(40, Math.max(0, Math.round(score)));
 }
 
 /**
- * Calcula score de engajamento (0–30).
+ * Calcula score de engajamento (0–25).
  * Engagement rate = likes / views. Acima de 5% é excelente.
  *
  * @param {number} likes
@@ -56,14 +55,13 @@ function viewsScore(views) {
  */
 function engagementScore(likes, views) {
   if (views <= 0 || likes <= 0) return 0;
-  const rate = likes / views; // ex: 0.08 = 8%
-  // 5%+ → 30pts; escala linear até 5%, zero abaixo de 0.1%
-  const score = Math.min(1, rate / 0.05) * 30;
+  const rate = likes / views;
+  const score = Math.min(1, rate / 0.05) * 25;
   return Math.max(0, Math.round(score));
 }
 
 /**
- * Calcula score de intenção de compra (0–20).
+ * Calcula score de intenção de compra (0–15).
  * Conta quantas keywords de compra aparecem na descrição.
  *
  * @param {string} descricao
@@ -73,10 +71,40 @@ function keywordScore(descricao) {
   if (!descricao) return 0;
   const lower = descricao.toLowerCase();
   const hits = PURCHASE_KEYWORDS.filter((kw) => lower.includes(kw)).length;
-  // 1 keyword → 10pts; 2+ → 20pts
   if (hits === 0) return 0;
-  if (hits === 1) return 10;
-  return 20;
+  if (hits === 1) return 8;
+  return 15;
+}
+
+/**
+ * Calcula score de recência (0–20).
+ * Vídeos recentes têm maior potencial — produtos antigos tendem a estar saturados.
+ *
+ * Tabela de penalidade:
+ *   < 30 dias   → 20 pts (sem penalidade)
+ *   30–90 dias  → 15 pts
+ *   90–180 dias → 10 pts
+ *   180–365 dias→  5 pts
+ *   > 365 dias  →  0 pts
+ *   sem data    → 10 pts (neutro)
+ *
+ * @param {number|null} createTime - Unix timestamp em segundos
+ * @returns {{ score: number, idadeDias: number|null }}
+ */
+function recencyScore(createTime) {
+  if (!createTime) return { score: 10, idadeDias: null };
+
+  const agora = Date.now();
+  const idadeDias = Math.floor((agora - createTime * 1000) / (1000 * 60 * 60 * 24));
+
+  let score;
+  if (idadeDias < 30)        score = 20;
+  else if (idadeDias < 90)   score = 15;
+  else if (idadeDias < 180)  score = 10;
+  else if (idadeDias < 365)  score =  5;
+  else                       score =  0;
+
+  return { score, idadeDias };
 }
 
 /**
@@ -120,20 +148,30 @@ function analyzeVideo(video) {
   const vScore = viewsScore(viewsNum);
   const eScore = engagementScore(likesNum, viewsNum);
   const kScore = keywordScore(video.descricao);
-  const total  = vScore + eScore + kScore;
+  const { score: rScore, idadeDias } = recencyScore(video.createTime ?? null);
+  const total  = vScore + eScore + kScore + rScore;
 
   const { label, emoji } = classify(total);
 
   const engRate = viewsNum > 0 ? ((likesNum / viewsNum) * 100).toFixed(1) : '—';
 
+  // Formata a data de publicação para exibição
+  let dataPublicacao = '—';
+  if (video.createTime) {
+    dataPublicacao = new Date(video.createTime * 1000)
+      .toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  }
+
   return {
     ...video,
-    produto:      extractProduct(video.descricao),
+    produto:         extractProduct(video.descricao),
     viewsNum,
     likesNum,
-    engRate:      engRate === '—' ? '—' : `${engRate}%`,
-    score:        total,
-    viabilidade:  `${emoji} ${label}`,
+    engRate:         engRate === '—' ? '—' : `${engRate}%`,
+    idadeDias,
+    dataPublicacao,
+    score:           total,
+    viabilidade:     `${emoji} ${label}`,
   };
 }
 
