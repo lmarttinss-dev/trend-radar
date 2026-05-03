@@ -29,11 +29,10 @@ if (fs.existsSync(ENV_PATH)) {
       if (chave && !(chave in process.env)) process.env[chave] = valor;
     });
 }
-const { getRandomUserAgent, randomDelay, log, keywordParaAlibaba } = require('./src/utils');
+const { getRandomUserAgent, randomDelay, log } = require('./src/utils');
 const { scrapeHashtag, applyStealthPatches } = require('./src/scraper');
 const { analyzeAll, mergeScores, classify } = require('./src/analyzer');
 const { analisarLote, obterAnalise } = require('./src/llm');
-const { buscarFornecedoresParaProdutos } = require('./src/scraperAlibaba');
 const { generateReport } = require('./src/reporter');
 
 const SESSION_PATH  = path.join(__dirname, 'auth', 'session.json');
@@ -57,16 +56,12 @@ const HEADLESS = process.env.HEADLESS === 'true';
 const LLM_ENABLED = process.env.LLM_ENABLED !== 'false';
 const LLM_MODEL   = (process.env.LLM_MODEL || 'claude-haiku-4-5').trim();
 
-// Habilita busca de fornecedores no Alibaba (Trade Assurance + Verified)
-const ALIBABA_ENABLED = process.env.ALIBABA_ENABLED !== 'false';
-const ALIBABA_LIMITE  = parseInt(process.env.ALIBABA_LIMITE ?? '3', 10);
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
   log('=== Trend Radar — TikTok Scraper ===');
   log(`Hashtags: ${HASHTAGS.map((h) => `#${h}`).join(', ')}`);
-  log(`Limite: ${LIMIT} vídeos por hashtag | Headless: ${HEADLESS} | LLM: ${LLM_ENABLED}${LLM_ENABLED ? ` (${LLM_MODEL})` : ''} | Alibaba: ${ALIBABA_ENABLED}`);
+  log(`Limite: ${LIMIT} vídeos por hashtag | Headless: ${HEADLESS} | LLM: ${LLM_ENABLED}${LLM_ENABLED ? ` (${LLM_MODEL})` : ''}`);
   log('');
 
   const userAgent = getRandomUserAgent();
@@ -162,46 +157,7 @@ async function main() {
 
   }
 
-  // ─── Busca fornecedores no Alibaba ────────────────────────────────────────
-  let alibabaResultados = new Map();
-
-  if (ALIBABA_ENABLED) {
-    log('\nIniciando busca de fornecedores no Alibaba...');
-
-    // Re-abre o browser para o Alibaba (contexto isolado do TikTok/ML)
-    const alibabaContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
-      headless: HEADLESS,
-      userAgent: getRandomUserAgent(),
-      viewport: { width: 1366, height: 768 },
-      locale: 'en-US',
-      timezoneId: 'America/Sao_Paulo',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-infobars',
-      ],
-    });
-    await applyStealthPatches(alibabaContext);
-
-    // Monta lista de produtos viáveis com suas keywords em inglês
-    const produtosViaveis = [
-      ...Object.values(analyzedResults).flat()
-        .filter((v) => v.analise && v.analise.regime_importacao !== 'nao_viavel' && v.score >= 70)
-        .map((v) => ({ nomeProduto: v.produto, keyword: keywordParaAlibaba(v.produto) })),
-    ].filter((p) => p.keyword.length > 0);
-
-    log(`alibaba: ${produtosViaveis.length} produto(s) viável(is) para pesquisa de fornecedores`);
-
-    if (produtosViaveis.length > 0) {
-      alibabaResultados = await buscarFornecedoresParaProdutos(alibabaContext, produtosViaveis, ALIBABA_LIMITE);
-    }
-
-    await alibabaContext.close().catch(() => null);
-    log(`alibaba: busca concluída — ${alibabaResultados.size} keyword(s) processada(s)`);
-  }
-
-  const reportPath = await generateReport(analyzedResults, LLM_ENABLED, LLM_MODEL, alibabaResultados);
+  const reportPath = await generateReport(analyzedResults, LLM_ENABLED, LLM_MODEL);
   log(`Relatório salvo em: ${reportPath}`);
 
   // ─── Saída no console ──────────────────────────────────────────────────────

@@ -60,25 +60,4 @@ const STOPWORDS = new Set([
   'beautiful','easy','unique','cute','cool','nice','great','amazing',
 ]);
 
-/**
- * Gera keyword em inglês para busca no Alibaba a partir da descrição do produto.
- * Limpa hashtags, stopwords e termos de ruído, mantendo tokens significativos.
- *
- * @param {string} descricao - Descrição/legenda do produto ou vídeo
- * @returns {string} keyword normalizada em inglês (ex: "oil dispenser kitchen")
- */
-function keywordParaAlibaba(descricao) {
-  if (!descricao || typeof descricao !== 'string') return '';
-
-  return descricao
-    .replace(/[#@]/g, ' ')               // remove # e @ de hashtags/menções
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ') // remove pontuação especial
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((t) => t.length >= 3 && !STOPWORDS.has(t) && !/^\d+$/.test(t))
-    .slice(0, 4)
-    .join(' ')
-    .trim();
-}
-
-module.exports = { getRandomUserAgent, randomDelay, log, keywordParaAlibaba };
+module.exports = { getRandomUserAgent, randomDelay, log };

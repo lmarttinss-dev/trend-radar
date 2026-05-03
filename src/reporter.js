@@ -177,54 +177,17 @@ function buildImportacaoSection(analyzedResults) {
 }
 
 /**
- * Gera seção com fornecedores encontrados no Alibaba.
- *
- * @param {Map<string, Array>} alibabaResultados - mapa keyword → fornecedores
- * @returns {string}
- */
-function buildAlibabaSection(alibabaResultados) {
-  const lines = [];
-  lines.push('## 🏭 Fornecedores no Alibaba\n');
-  lines.push('> Filtro: Trade Assurance + Verified Supplier. Ordenados por keyword.\n');
-
-  for (const [keyword, fornecedores] of alibabaResultados.entries()) {
-    if (!fornecedores || fornecedores.length === 0) continue;
-
-    lines.push(`### ${keyword}\n`);
-    lines.push('| Fornecedor | País | Preço Unit. | MOQ | Gold Sup. | Trade Ass. | Verificado | Produto | Link |');
-    lines.push('|---|---|---|---|---|:---:|:---:|---|:---:|');
-
-    for (const f of fornecedores) {
-      const nome      = (f.nomeFornecedor || '—').replace(/\|/g, '\\|').substring(0, 40);
-      const produto   = (f.nomeProduto   || '—').replace(/\|/g, '\\|').substring(0, 45);
-      const ta        = f.tradeAssurance ? '✅' : '❌';
-      const verificado = f.verificado    ? '✅' : '❌';
-      const linkProd  = f.urlProduto     ? `[ver](${f.urlProduto})` : '—';
-
-      lines.push(
-        `| ${nome} | ${f.pais || 'China'} | ${f.precoUnitario || '—'} | ${f.moq || '—'} | ${f.anosGoldSupplier || '—'} | ${ta} | ${verificado} | ${produto} | ${linkProd} |`
-      );
-    }
-
-    lines.push('');
-  }
-
-  return lines.join('\n');
-}
-
-/**
  * Constrói e salva o relatório .md completo.
  *
  * @param {Object}  analyzedResults - Resultado do analyzeAll() (TikTok)
  * @param {boolean} llmEnabled      - Se análise LLM foi executada
  * @returns {Promise<string>} Caminho do arquivo gerado
  */
-async function generateReport(analyzedResults, llmEnabled = false, llmModelo = 'claude-haiku-4-5', alibabaResultados = new Map()) {
+async function generateReport(analyzedResults, llmEnabled = false, llmModelo = 'claude-haiku-4-5') {
   const date     = new Date().toISOString().substring(0, 10);
   const datetime = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const hashtags = Object.keys(analyzedResults);
   const totalTiktok = Object.values(analyzedResults).reduce((s, v) => s + v.length, 0);
-  const totalAlibabaFornecedores = [...alibabaResultados.values()].reduce((s, arr) => s + arr.length, 0);
 
   const lines = [];
 
@@ -235,7 +198,6 @@ async function generateReport(analyzedResults, llmEnabled = false, llmModelo = '
   lines.push(`**Hashtags TikTok:** ${hashtags.map((h) => `#${h}`).join(', ')}  `);
   lines.push(`**Vídeos TikTok coletados:** ${totalTiktok}  `);
   lines.push(`**Análise LLM:** ${llmEnabled ? `✅ Habilitada (${llmModelo})` : '⚠️ Desabilitada'}  `);
-  lines.push(`**Fornecedores Alibaba:** ${totalAlibabaFornecedores > 0 ? `✅ ${totalAlibabaFornecedores} encontrado(s)` : '—'}  `);
   lines.push('');
   lines.push('---');
   lines.push('');
@@ -243,10 +205,7 @@ async function generateReport(analyzedResults, llmEnabled = false, llmModelo = '
   // ── Índice de navegação ───────────────────────────────────────────────────
   lines.push('## Índice\n');
   if (llmEnabled) {
-    lines.push('- [🚀 Produtos Viáveis para Importação Simplificada](#-produtos-viáveis-para-importação-simplificada)');
-  }
-  if (totalAlibabaFornecedores > 0) {
-    lines.push('- [🏭 Fornecedores no Alibaba](#-fornecedores-no-alibaba)');
+    lines.push('- [🚀 Produtos Viáveis para Importação Simplificada](#-produtos-vi%C3%A1veis-para-importa%C3%A7%C3%A3o-simplificada)');
   }
   lines.push('- [🏆 Top 5 Oportunidades de Revenda](#-top-5-oportunidades-de-revenda)');
   for (const hashtag of Object.keys(analyzedResults)) {
@@ -260,12 +219,6 @@ async function generateReport(analyzedResults, llmEnabled = false, llmModelo = '
   // ── Seção de importação simplificada (LLM) ────────────────────────────────
   if (llmEnabled) {
     lines.push(buildImportacaoSection(analyzedResults));
-    lines.push('---');
-    lines.push('');
-  }
-  // ── Seção de fornecedores Alibaba ────────────────────────────────────
-  if (totalAlibabaFornecedores > 0) {
-    lines.push(buildAlibabaSection(alibabaResultados));
     lines.push('---');
     lines.push('');
   }
