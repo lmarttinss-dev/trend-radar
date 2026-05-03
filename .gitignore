@@ -1,1 +1,5 @@
-node_modules/\nauth/\nreports/
+node_modules/
+auth/
+reports/
+data/
+.env
