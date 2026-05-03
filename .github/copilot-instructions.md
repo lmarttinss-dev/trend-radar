@@ -63,6 +63,26 @@ Toda execução de coleta deve:
 
 Nunca finalizar `index.js` sem gerar o relatório, mesmo que a coleta retorne 0 vídeos.
 
+## Fluxo Git
+
+Toda nova funcionalidade deve ser desenvolvida em uma branch dedicada, nunca diretamente em `main`.
+
+**Convenção de nome:**
+```
+feat/<descricao-curta>       # nova funcionalidade
+fix/<descricao-curta>        # correção de bug
+chore/<descricao-curta>      # manutenção / ajustes sem impacto funcional
+```
+
+**Passo a passo obrigatório antes de implementar qualquer mudança:**
+```bash
+git checkout main
+git pull
+git checkout -b feat/<descricao-curta>
+```
+
+Nunca implementar código em `main` sem abrir uma branch antes.
+
 ## Comandos
 
 ```bash

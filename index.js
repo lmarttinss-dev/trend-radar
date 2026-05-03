@@ -13,9 +13,27 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+
+// Carrega variáveis do arquivo .env (se existir) sem dependência de dotenv
+const ENV_PATH = path.join(__dirname, '.env');
+if (fs.existsSync(ENV_PATH)) {
+  fs.readFileSync(ENV_PATH, 'utf8')
+    .split('\n')
+    .forEach((linha) => {
+      const l = linha.trim();
+      if (!l || l.startsWith('#')) return;
+      const idx = l.indexOf('=');
+      if (idx === -1) return;
+      const chave = l.substring(0, idx).trim();
+      const valor = l.substring(idx + 1).trim();
+      if (chave && !(chave in process.env)) process.env[chave] = valor;
+    });
+}
 const { getRandomUserAgent, randomDelay, log } = require('./src/utils');
 const { scrapeHashtag, applyStealthPatches } = require('./src/scraper');
-const { analyzeAll } = require('./src/analyzer');
+const { scrapeCategoriasML } = require('./src/scraperML');
+const { analyzeAll, analisarProdutoML, mergeScores, classify } = require('./src/analyzer');
+const { analisarLote, obterAnalise } = require('./src/llm');
 const { generateReport } = require('./src/reporter');
 
 const SESSION_PATH  = path.join(__dirname, 'auth', 'session.json');
@@ -35,12 +53,23 @@ const LIMIT = parseInt(process.env.LIMIT ?? '20', 10);
 // true  = roda em background (mais rápido, mais chance de bloqueio)
 const HEADLESS = process.env.HEADLESS === 'true';
 
+// Habilita análise LLM (requer ANTHROPIC_API_KEY no ambiente)
+const LLM_ENABLED = process.env.LLM_ENABLED !== 'false';
+const LLM_MODEL   = (process.env.LLM_MODEL || 'claude-haiku-4-5').trim();
+
+// Categorias do Mercado Livre a coletar (separadas por vírgula)
+const ML_CATEGORIAS = (process.env.ML_CATEGORIAS || 'beleza,esportes,games,eletronicos,celulares')
+  .split(',')
+  .map((c) => c.trim())
+  .filter(Boolean);
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  log('=== Trend Radar — TikTok Scraper ===');
+  log('=== Trend Radar — TikTok + Mercado Livre Scraper ===');
   log(`Hashtags: ${HASHTAGS.map((h) => `#${h}`).join(', ')}`);
-  log(`Limite: ${LIMIT} vídeos por hashtag | Headless: ${HEADLESS}`);
+  log(`ML Categorias: ${ML_CATEGORIAS.join(', ')}`);
+  log(`Limite: ${LIMIT} vídeos por hashtag | Headless: ${HEADLESS} | LLM: ${LLM_ENABLED}${LLM_ENABLED ? ` (${LLM_MODEL})` : ''}`);
   log('');
 
   const userAgent = getRandomUserAgent();
@@ -101,19 +130,69 @@ async function main() {
     }
   }
 
+  // ─── Coleta Mercado Livre ──────────────────────────────────────────────────
+  log('\n── Iniciando coleta: Mercado Livre ──');
+  const mlResultsBrutos = await scrapeCategoriasML(context, ML_CATEGORIAS);
+  const mlResults = mlResultsBrutos.map(analisarProdutoML);
+  log(`Coletados ${mlResults.length} produtos do Mercado Livre`);
+
   await context.close();
 
-  // ─── Análise e Relatório ───────────────────────────────────────────────────
+  // ─── Análise heurística (TikTok) ──────────────────────────────────────────
   log('\nAnalisando viabilidade de revenda...');
   const analyzedResults = analyzeAll(allResults);
 
-  const reportPath = generateReport(analyzedResults);
+  // ─── Análise LLM ──────────────────────────────────────────────────────────
+  let llmMap = new Map();
+
+  if (LLM_ENABLED) {
+    log('\nIniciando análise LLM (Claude Haiku 4.5)...');
+
+    // Consolida todos os produtos (TikTok + ML) para análise em lote
+    const todosProdutos = [
+      ...Object.values(analyzedResults).flat().map((v) => ({
+        nome:      v.produto,
+        categoria: 'TikTok Virais',
+        fonte:     'tiktok',
+      })),
+      ...mlResults.map((p) => ({
+        nome:      p.nome,
+        categoria: p.categoria,
+        fonte:     'mercadolivre',
+      })),
+    ].filter((p) => p.nome && p.nome !== '—');
+
+    llmMap = await analisarLote(todosProdutos);
+
+    // Aplica merge de scores nos vídeos do TikTok
+    for (const videos of Object.values(analyzedResults)) {
+      for (const v of videos) {
+        const analise = obterAnalise(llmMap, v.produto);
+        v.scoreHeuristico = v.score;
+        v.score    = mergeScores(v.score, analise.score_llm, 'tiktok');
+        v.analise  = analise;
+        const { label, emoji } = classify(v.score);
+        v.viabilidade = `${emoji} ${label}`;
+      }
+    }
+
+    // Aplica merge de scores nos produtos do ML
+    for (const p of mlResults) {
+      const analise = obterAnalise(llmMap, p.nome);
+      p.scoreHeuristico = p.score;
+      p.score    = mergeScores(p.score, analise.score_llm, 'mercadolivre');
+      p.analise  = analise;
+      const { label, emoji } = classify(p.score);
+      p.viabilidade = `${emoji} ${label}`;
+    }
+  }
+
+  const reportPath = await generateReport(analyzedResults, mlResults, LLM_ENABLED, LLM_MODEL);
   log(`Relatório salvo em: ${reportPath}`);
 
   // ─── Saída no console ──────────────────────────────────────────────────────
   console.log('\n');
   log('=== RESULTADO FINAL ===\n');
-
   for (const [hashtag, videos] of Object.entries(analyzedResults)) {
     console.log(`\n📌 #${hashtag} — ${videos.length} vídeos coletados`);
     console.log('─'.repeat(60));
@@ -133,12 +212,25 @@ async function main() {
       if (v.produto)  console.log(`       Produto   : ${v.produto.substring(0, 80)}`);
       if (v.views)    console.log(`       Views     : ${v.views}  |  Engajamento: ${v.engRate}`);
       if (v.likes)    console.log(`       Likes     : ${v.likes}`);
+      if (v.analise)  console.log(`       Importação: ${v.analise.regime_importacao} | Score LLM: ${v.analise.score_llm} | ${v.analise.justificativa}`);
+    });
+  }
+
+  // Resumo Mercado Livre no console
+  if (mlResults.length > 0) {
+    const topML = [...mlResults].sort((a, b) => b.score - a.score).slice(0, 5);
+    console.log(`\n\n📦 Mercado Livre — Top 5 por Score`);
+    console.log('─'.repeat(60));
+    topML.forEach((p, i) => {
+      console.log(`\n  [${i + 1}] ${p.viabilidade} (score: ${p.score}) — ${p.nome}`);
+      console.log(`       Categoria : ${p.categoria} | Tipo: ${p.tipo} | Posição: ${p.posicao}`);
+      if (p.analise) console.log(`       Importação: ${p.analise.regime_importacao} | Score LLM: ${p.analise.score_llm} | ${p.analise.justificativa}`);
     });
   }
 
   // Saída JSON completa (pode ser redirecionada para arquivo)
   console.log('\n\n=== JSON OUTPUT ===\n');
-  console.log(JSON.stringify(analyzedResults, null, 2));
+  console.log(JSON.stringify({ tiktok: analyzedResults, mercadolivre: mlResults }, null, 2));
 }
 
 main().catch((err) => {
