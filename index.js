@@ -29,11 +29,11 @@ if (fs.existsSync(ENV_PATH)) {
       if (chave && !(chave in process.env)) process.env[chave] = valor;
     });
 }
-const { getRandomUserAgent, randomDelay, log } = require('./src/utils');
+const { getRandomUserAgent, randomDelay, log, keywordParaAlibaba } = require('./src/utils');
 const { scrapeHashtag, applyStealthPatches } = require('./src/scraper');
-const { scrapeCategoriasML } = require('./src/scraperML');
-const { analyzeAll, analisarProdutoML, mergeScores, classify } = require('./src/analyzer');
+const { analyzeAll, mergeScores, classify } = require('./src/analyzer');
 const { analisarLote, obterAnalise } = require('./src/llm');
+const { buscarFornecedoresParaProdutos } = require('./src/scraperAlibaba');
 const { generateReport } = require('./src/reporter');
 
 const SESSION_PATH  = path.join(__dirname, 'auth', 'session.json');
@@ -57,19 +57,16 @@ const HEADLESS = process.env.HEADLESS === 'true';
 const LLM_ENABLED = process.env.LLM_ENABLED !== 'false';
 const LLM_MODEL   = (process.env.LLM_MODEL || 'claude-haiku-4-5').trim();
 
-// Categorias do Mercado Livre a coletar (separadas por vírgula)
-const ML_CATEGORIAS = (process.env.ML_CATEGORIAS || 'beleza,esportes,games,eletronicos,celulares')
-  .split(',')
-  .map((c) => c.trim())
-  .filter(Boolean);
+// Habilita busca de fornecedores no Alibaba (Trade Assurance + Verified)
+const ALIBABA_ENABLED = process.env.ALIBABA_ENABLED !== 'false';
+const ALIBABA_LIMITE  = parseInt(process.env.ALIBABA_LIMITE ?? '3', 10);
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  log('=== Trend Radar — TikTok + Mercado Livre Scraper ===');
+  log('=== Trend Radar — TikTok Scraper ===');
   log(`Hashtags: ${HASHTAGS.map((h) => `#${h}`).join(', ')}`);
-  log(`ML Categorias: ${ML_CATEGORIAS.join(', ')}`);
-  log(`Limite: ${LIMIT} vídeos por hashtag | Headless: ${HEADLESS} | LLM: ${LLM_ENABLED}${LLM_ENABLED ? ` (${LLM_MODEL})` : ''}`);
+  log(`Limite: ${LIMIT} vídeos por hashtag | Headless: ${HEADLESS} | LLM: ${LLM_ENABLED}${LLM_ENABLED ? ` (${LLM_MODEL})` : ''} | Alibaba: ${ALIBABA_ENABLED}`);
   log('');
 
   const userAgent = getRandomUserAgent();
@@ -130,12 +127,6 @@ async function main() {
     }
   }
 
-  // ─── Coleta Mercado Livre ──────────────────────────────────────────────────
-  log('\n── Iniciando coleta: Mercado Livre ──');
-  const mlResultsBrutos = await scrapeCategoriasML(context, ML_CATEGORIAS);
-  const mlResults = mlResultsBrutos.map(analisarProdutoML);
-  log(`Coletados ${mlResults.length} produtos do Mercado Livre`);
-
   await context.close();
 
   // ─── Análise heurística (TikTok) ──────────────────────────────────────────
@@ -148,19 +139,12 @@ async function main() {
   if (LLM_ENABLED) {
     log('\nIniciando análise LLM (Claude Haiku 4.5)...');
 
-    // Consolida todos os produtos (TikTok + ML) para análise em lote
-    const todosProdutos = [
-      ...Object.values(analyzedResults).flat().map((v) => ({
-        nome:      v.produto,
-        categoria: 'TikTok Virais',
-        fonte:     'tiktok',
-      })),
-      ...mlResults.map((p) => ({
-        nome:      p.nome,
-        categoria: p.categoria,
-        fonte:     'mercadolivre',
-      })),
-    ].filter((p) => p.nome && p.nome !== '—');
+    // Consolida produtos TikTok para análise em lote
+    const todosProdutos = Object.values(analyzedResults).flat().map((v) => ({
+      nome:      v.produto,
+      categoria: 'TikTok Virais',
+      fonte:     'tiktok',
+    })).filter((p) => p.nome && p.nome !== '—');
 
     llmMap = await analisarLote(todosProdutos);
 
@@ -169,25 +153,55 @@ async function main() {
       for (const v of videos) {
         const analise = obterAnalise(llmMap, v.produto);
         v.scoreHeuristico = v.score;
-        v.score    = mergeScores(v.score, analise.score_llm, 'tiktok');
+        v.score    = mergeScores(v.score, analise.score_llm);
         v.analise  = analise;
         const { label, emoji } = classify(v.score);
         v.viabilidade = `${emoji} ${label}`;
       }
     }
 
-    // Aplica merge de scores nos produtos do ML
-    for (const p of mlResults) {
-      const analise = obterAnalise(llmMap, p.nome);
-      p.scoreHeuristico = p.score;
-      p.score    = mergeScores(p.score, analise.score_llm, 'mercadolivre');
-      p.analise  = analise;
-      const { label, emoji } = classify(p.score);
-      p.viabilidade = `${emoji} ${label}`;
-    }
   }
 
-  const reportPath = await generateReport(analyzedResults, mlResults, LLM_ENABLED, LLM_MODEL);
+  // ─── Busca fornecedores no Alibaba ────────────────────────────────────────
+  let alibabaResultados = new Map();
+
+  if (ALIBABA_ENABLED) {
+    log('\nIniciando busca de fornecedores no Alibaba...');
+
+    // Re-abre o browser para o Alibaba (contexto isolado do TikTok/ML)
+    const alibabaContext = await chromium.launchPersistentContext(USER_DATA_DIR, {
+      headless: HEADLESS,
+      userAgent: getRandomUserAgent(),
+      viewport: { width: 1366, height: 768 },
+      locale: 'en-US',
+      timezoneId: 'America/Sao_Paulo',
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-infobars',
+      ],
+    });
+    await applyStealthPatches(alibabaContext);
+
+    // Monta lista de produtos viáveis com suas keywords em inglês
+    const produtosViaveis = [
+      ...Object.values(analyzedResults).flat()
+        .filter((v) => v.analise && v.analise.regime_importacao !== 'nao_viavel' && v.score >= 70)
+        .map((v) => ({ nomeProduto: v.produto, keyword: keywordParaAlibaba(v.produto) })),
+    ].filter((p) => p.keyword.length > 0);
+
+    log(`alibaba: ${produtosViaveis.length} produto(s) viável(is) para pesquisa de fornecedores`);
+
+    if (produtosViaveis.length > 0) {
+      alibabaResultados = await buscarFornecedoresParaProdutos(alibabaContext, produtosViaveis, ALIBABA_LIMITE);
+    }
+
+    await alibabaContext.close().catch(() => null);
+    log(`alibaba: busca concluída — ${alibabaResultados.size} keyword(s) processada(s)`);
+  }
+
+  const reportPath = await generateReport(analyzedResults, LLM_ENABLED, LLM_MODEL, alibabaResultados);
   log(`Relatório salvo em: ${reportPath}`);
 
   // ─── Saída no console ──────────────────────────────────────────────────────
@@ -216,21 +230,9 @@ async function main() {
     });
   }
 
-  // Resumo Mercado Livre no console
-  if (mlResults.length > 0) {
-    const topML = [...mlResults].sort((a, b) => b.score - a.score).slice(0, 5);
-    console.log(`\n\n📦 Mercado Livre — Top 5 por Score`);
-    console.log('─'.repeat(60));
-    topML.forEach((p, i) => {
-      console.log(`\n  [${i + 1}] ${p.viabilidade} (score: ${p.score}) — ${p.nome}`);
-      console.log(`       Categoria : ${p.categoria} | Tipo: ${p.tipo} | Posição: ${p.posicao}`);
-      if (p.analise) console.log(`       Importação: ${p.analise.regime_importacao} | Score LLM: ${p.analise.score_llm} | ${p.analise.justificativa}`);
-    });
-  }
-
   // Saída JSON completa (pode ser redirecionada para arquivo)
   console.log('\n\n=== JSON OUTPUT ===\n');
-  console.log(JSON.stringify({ tiktok: analyzedResults, mercadolivre: mlResults }, null, 2));
+  console.log(JSON.stringify({ tiktok: analyzedResults }, null, 2));
 }
 
 main().catch((err) => {

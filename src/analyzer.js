@@ -189,88 +189,17 @@ function analyzeAll(allResults) {
   return analyzed;
 }
 
-/**
- * Calcula score posicional para produtos do Mercado Livre (0–100).
- * Substitui o score de views/engajamento, pois produtos ML não têm essas métricas.
- *
- * Tabela de pontos base por tipo:
- *   MAIOR_CRESCIMENTO posição 1–3  → 80–100 pts
- *   MAIOR_CRESCIMENTO posição 4–10 → 60–79 pts
- *   MAIS_DESEJADA     posição 1–5  → 60–80 pts
- *   MAIS_DESEJADA     posição 6–10 → 45–59 pts
- *   MAIS_POPULAR      posição 1–10 → 40–65 pts
- *   Qualquer tipo     posição > 10 → penalidade de 15%
- *
- * @param {number} posicao
- * @param {string} tipo - "MAIOR_CRESCIMENTO" | "MAIS_DESEJADA" | "MAIS_POPULAR"
- * @returns {number}
- */
-function posicaoScore(posicao, tipo) {
-  let base;
-
-  if (tipo === 'MAIOR_CRESCIMENTO') {
-    if (posicao <= 3)  base = 100 - (posicao - 1) * 10; // 100, 90, 80
-    else if (posicao <= 10) base = 79 - (posicao - 4) * 3; // 79…58
-    else base = 50;
-  } else if (tipo === 'MAIS_DESEJADA') {
-    if (posicao <= 5)  base = 80 - (posicao - 1) * 5; // 80, 75, 70, 65, 60
-    else if (posicao <= 10) base = 59 - (posicao - 6) * 3; // 59…47
-    else base = 40;
-  } else {
-    // MAIS_POPULAR e desconhecidos
-    if (posicao <= 10) base = 65 - (posicao - 1) * 3; // 65…38
-    else base = 35;
-  }
-
-  // Penalidade de 15% para posições > 10
-  if (posicao > 10) base = Math.round(base * 0.85);
-
-  return Math.min(100, Math.max(0, base));
-}
 
 /**
  * Calcula score final combinando heurística e score LLM.
  *
- * Pesos por fonte:
- *   'tiktok'       → 65% heurístico + 35% LLM  (dados ricos de engajamento)
- *   'mercadolivre' → 35% posicional + 65% LLM  (dados de posição apenas)
- *
- * @param {number} heuristicScore - score do analyzer heurístico (0–100)
- * @param {number} llmScore       - score_llm retornado pelo LLM (0–100)
- * @param {string} fonte          - 'tiktok' | 'mercadolivre'
- * @returns {number} score combinado arredondado
+ * @param {number} heuristicScore
+ * @param {number} llmScore
+ * @returns {number}
  */
-function mergeScores(heuristicScore, llmScore, fonte) {
-  if (fonte === 'mercadolivre') {
-    return Math.round(heuristicScore * 0.35 + llmScore * 0.65);
-  }
-  // tiktok ou qualquer outra fonte
+function mergeScores(heuristicScore, llmScore) {
   return Math.round(heuristicScore * 0.65 + llmScore * 0.35);
 }
 
-/**
- * Analisa um produto do Mercado Livre (sem views/likes) e retorna objeto enriquecido.
- * Usa posicaoScore em vez de viewsScore/engagementScore.
- *
- * @param {Object} produto - { nome, categoria, posicao, tipo, url, fonte }
- * @returns {Object}
- */
-function analisarProdutoML(produto) {
-  const hScore = posicaoScore(produto.posicao || 99, produto.tipo || 'MAIS_POPULAR');
-  const { label, emoji } = classify(hScore);
+module.exports = { analyzeAll, analyzeVideo, mergeScores, parseMetric, classify };
 
-  return {
-    ...produto,
-    produto:      produto.nome,
-    viewsNum:     0,
-    likesNum:     0,
-    engRate:      '—',
-    idadeDias:    null,
-    dataPublicacao: '—',
-    scoreHeuristico: hScore,
-    score:        hScore,       // será substituído por mergeScores após LLM
-    viabilidade:  `${emoji} ${label}`,
-  };
-}
-
-module.exports = { analyzeAll, analyzeVideo, analisarProdutoML, posicaoScore, mergeScores, parseMetric, classify };

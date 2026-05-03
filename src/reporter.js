@@ -6,7 +6,7 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { extrairKeywordML, log } = require('./utils');
+const { log } = require('./utils');
 const REPORTS_DIR = path.join(__dirname, '..', 'reports');
 
 /**
@@ -23,11 +23,10 @@ function fmtNum(n) {
  *
  * @param {string}  hashtag
  * @param {Array}   videos      — vídeos já analisados pelo analyzer
- * @param {Object}  mlUrls      — mapa url → link ML pré-computado
  * @param {boolean} llmEnabled
  * @returns {string}
  */
-function buildHashtagSection(hashtag, videos, mlUrls, llmEnabled = false) {
+function buildHashtagSection(hashtag, videos, llmEnabled = false) {
   const lines = [];
   lines.push(`## #${hashtag}\n`);
 
@@ -61,25 +60,24 @@ function buildHashtagSection(hashtag, videos, mlUrls, llmEnabled = false) {
   lines.push('### Vídeos');
 
   if (llmEnabled) {
-    lines.push('| # | Produto / Descrição | Publicado | Views | Likes | Engaj. | Score | LLM | Viabilidade | Link | ML |');
-    lines.push('|---|---|---|---:|---:|---:|---:|---:|---|---|---|');
+    lines.push('| # | Produto / Descrição | Publicado | Views | Likes | Engaj. | Score | LLM | Viabilidade | Link |');
+    lines.push('|---|---|---|---:|---:|---:|---:|---:|---|---|');
   } else {
-    lines.push('| # | Produto / Descrição | Publicado | Views | Likes | Engaj. | Score | Viabilidade | Link | ML |');
-    lines.push('|---|---|---|---:|---:|---:|---:|---|---|---|');
+    lines.push('| # | Produto / Descrição | Publicado | Views | Likes | Engaj. | Score | Viabilidade | Link |');
+    lines.push('|---|---|---|---:|---:|---:|---:|---|---|');
   }
 
   sorted.forEach((v, i) => {
     const produto = v.produto.replace(/\|/g, '\\|').substring(0, 55);
     const idade = v.idadeDias !== null ? `${v.dataPublicacao} (${v.idadeDias}d)` : v.dataPublicacao;
-    const mlLink = mlUrls[v.url] ? `[🛒](${mlUrls[v.url]})` : '—';
 
     if (llmEnabled && v.analise) {
       lines.push(
-        `| ${i + 1} | ${produto} | ${idade} | ${fmtNum(v.viewsNum)} | ${fmtNum(v.likesNum)} | ${v.engRate} | ${v.score} | ${v.analise.score_llm} | ${v.viabilidade} | [ver](${v.url}) | ${mlLink} |`
+        `| ${i + 1} | ${produto} | ${idade} | ${fmtNum(v.viewsNum)} | ${fmtNum(v.likesNum)} | ${v.engRate} | ${v.score} | ${v.analise.score_llm} | ${v.viabilidade} | [ver](${v.url}) |`
       );
     } else {
       lines.push(
-        `| ${i + 1} | ${produto} | ${idade} | ${fmtNum(v.viewsNum)} | ${fmtNum(v.likesNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) | ${mlLink} |`
+        `| ${i + 1} | ${produto} | ${idade} | ${fmtNum(v.viewsNum)} | ${fmtNum(v.likesNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) |`
       );
     }
   });
@@ -92,10 +90,9 @@ function buildHashtagSection(hashtag, videos, mlUrls, llmEnabled = false) {
  * Gera seção "Top 5 Oportunidades" consolidada entre todas as hashtags.
  *
  * @param {Object} analyzedResults
- * @param {Object} mlUrls  — mapa url → link ML pré-computado
  * @returns {string}
  */
-function buildTop5Section(analyzedResults, mlUrls) {
+function buildTop5Section(analyzedResults) {
   const allVideos = Object.entries(analyzedResults).flatMap(([hashtag, videos]) =>
     videos.map((v) => ({ ...v, hashtag }))
   );
@@ -109,15 +106,14 @@ function buildTop5Section(analyzedResults, mlUrls) {
   const lines = [];
   lines.push('## 🏆 Top 5 Oportunidades de Revenda\n');
   lines.push('> Vídeos com maior score consolidado entre todas as hashtags.\n');
-  lines.push('| Rank | Produto / Descrição | Hashtag | Publicado | Views | Engaj. | Score | Viabilidade | Link | ML |');
-  lines.push('|---:|---|---|---|---:|---:|---:|---|---|---|');
+  lines.push('| Rank | Produto / Descrição | Hashtag | Publicado | Views | Engaj. | Score | Viabilidade | Link |');
+  lines.push('|---:|---|---|---|---:|---:|---:|---|---|');
 
   top5.forEach((v, i) => {
     const produto = v.produto.replace(/\|/g, '\\|').substring(0, 55);
     const idade = v.idadeDias !== null ? `${v.dataPublicacao} (${v.idadeDias}d)` : v.dataPublicacao;
-    const mlLink = mlUrls[v.url] ? `[🛒](${mlUrls[v.url]})` : '—';
     lines.push(
-      `| ${i + 1} | ${produto} | #${v.hashtag} | ${idade} | ${fmtNum(v.viewsNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) | ${mlLink} |`
+      `| ${i + 1} | ${produto} | #${v.hashtag} | ${idade} | ${fmtNum(v.viewsNum)} | ${v.engRate} | ${v.score} | ${v.viabilidade} | [ver](${v.url}) |`
     );
   });
 
@@ -129,18 +125,11 @@ function buildTop5Section(analyzedResults, mlUrls) {
  * Gera seção de importação simplificada — produtos filtrados pelo LLM.
  * Filtro: regime != 'nao_viavel' E score_llm >= 70
  *
- * @param {Array} mlResults   — produtos do Mercado Livre analisados
  * @param {Object} analyzedResults — vídeos do TikTok analisados
  * @returns {string}
  */
-function buildImportacaoSection(mlResults, analyzedResults) {
-  // Consolida todos os produtos com análise LLM
+function buildImportacaoSection(analyzedResults) {
   const candidatos = [];
-
-  for (const p of (mlResults || [])) {
-    if (!p.analise) continue;
-    candidatos.push({ ...p, nomeProduto: p.nome, origemLabel: `ML / ${p.categoria}` });
-  }
 
   for (const [hashtag, videos] of Object.entries(analyzedResults || {})) {
     for (const v of videos) {
@@ -188,55 +177,35 @@ function buildImportacaoSection(mlResults, analyzedResults) {
 }
 
 /**
- * Gera seção com produtos do Mercado Livre.
+ * Gera seção com fornecedores encontrados no Alibaba.
  *
- * @param {Array}   mlResults  — produtos ML analisados
- * @param {boolean} llmEnabled
+ * @param {Map<string, Array>} alibabaResultados - mapa keyword → fornecedores
  * @returns {string}
  */
-function buildMLSection(mlResults, llmEnabled) {
-  if (!mlResults || mlResults.length === 0) return '';
-
+function buildAlibabaSection(alibabaResultados) {
   const lines = [];
-  lines.push('## 📊 Tendências do Mercado Livre\n');
+  lines.push('## 🏭 Fornecedores no Alibaba\n');
+  lines.push('> Filtro: Trade Assurance + Verified Supplier. Ordenados por keyword.\n');
 
-  // Agrupa por categoria
-  const porCategoria = {};
-  for (const p of mlResults) {
-    const cat = p.categoria || 'Outros';
-    if (!porCategoria[cat]) porCategoria[cat] = [];
-    porCategoria[cat].push(p);
-  }
+  for (const [keyword, fornecedores] of alibabaResultados.entries()) {
+    if (!fornecedores || fornecedores.length === 0) continue;
 
-  for (const [cat, produtos] of Object.entries(porCategoria)) {
-    const sorted = [...produtos].sort((a, b) => b.score - a.score);
-    lines.push(`### ${cat}\n`);
+    lines.push(`### ${keyword}\n`);
+    lines.push('| Fornecedor | País | Preço Unit. | MOQ | Gold Sup. | Trade Ass. | Verificado | Produto | Link |');
+    lines.push('|---|---|---|---|---|:---:|:---:|---|:---:|');
 
-    const colunas = llmEnabled
-      ? '| # | Produto | Tipo | Posição | Score | Viabilidade | Score LLM | Regime | Link |'
-      : '| # | Produto | Tipo | Posição | Score | Viabilidade | Link |';
-    const sep = llmEnabled
-      ? '|---:|---|---|---:|---:|---|---:|---|---|'
-      : '|---:|---|---|---:|---:|---|---|';
+    for (const f of fornecedores) {
+      const nome      = (f.nomeFornecedor || '—').replace(/\|/g, '\\|').substring(0, 40);
+      const produto   = (f.nomeProduto   || '—').replace(/\|/g, '\\|').substring(0, 45);
+      const ta        = f.tradeAssurance ? '✅' : '❌';
+      const verificado = f.verificado    ? '✅' : '❌';
+      const linkProd  = f.urlProduto     ? `[ver](${f.urlProduto})` : '—';
 
-    lines.push(colunas);
-    lines.push(sep);
+      lines.push(
+        `| ${nome} | ${f.pais || 'China'} | ${f.precoUnitario || '—'} | ${f.moq || '—'} | ${f.anosGoldSupplier || '—'} | ${ta} | ${verificado} | ${produto} | ${linkProd} |`
+      );
+    }
 
-    sorted.forEach((p, i) => {
-      const nome = (p.nome || '—').replace(/\|/g, '\\|').substring(0, 50);
-      const link = p.url ? `[🔗](${p.url})` : '—';
-
-      if (llmEnabled && p.analise) {
-        const regime = p.analise.regime_importacao === 'remessa_ate_50usd'
-          ? '📦 ≤ $50'
-          : p.analise.regime_importacao === 'pf_ate_500usd'
-            ? '💼 ≤ $500'
-            : '❌ Inviável';
-        lines.push(`| ${i + 1} | ${nome} | ${p.tipo || '—'} | ${p.posicao} | ${p.score} | ${p.viabilidade} | ${p.analise.score_llm} | ${regime} | ${link} |`);
-      } else {
-        lines.push(`| ${i + 1} | ${nome} | ${p.tipo || '—'} | ${p.posicao} | ${p.score} | ${p.viabilidade} | ${link} |`);
-      }
-    });
     lines.push('');
   }
 
@@ -247,25 +216,15 @@ function buildMLSection(mlResults, llmEnabled) {
  * Constrói e salva o relatório .md completo.
  *
  * @param {Object}  analyzedResults - Resultado do analyzeAll() (TikTok)
- * @param {Array}   mlResults       - Produtos ML analisados
  * @param {boolean} llmEnabled      - Se análise LLM foi executada
  * @returns {Promise<string>} Caminho do arquivo gerado
  */
-async function generateReport(analyzedResults, mlResults = [], llmEnabled = false, llmModelo = 'claude-haiku-4-5') {
+async function generateReport(analyzedResults, llmEnabled = false, llmModelo = 'claude-haiku-4-5', alibabaResultados = new Map()) {
   const date     = new Date().toISOString().substring(0, 10);
   const datetime = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const hashtags = Object.keys(analyzedResults);
   const totalTiktok = Object.values(analyzedResults).reduce((s, v) => s + v.length, 0);
-  const totalML     = mlResults.length;
-
-  // Pré-computa URLs do ML para todos os vídeos do TikTok
-  log('Gerando links de busca no Mercado Livre...');
-  const mlUrls = {};
-  for (const videos of Object.values(analyzedResults)) {
-    for (const v of videos) {
-      mlUrls[v.url] = await extrairKeywordML(v.produto);
-    }
-  }
+  const totalAlibabaFornecedores = [...alibabaResultados.values()].reduce((s, arr) => s + arr.length, 0);
 
   const lines = [];
 
@@ -275,8 +234,8 @@ async function generateReport(analyzedResults, mlResults = [], llmEnabled = fals
   lines.push(`**Gerado em:** ${datetime}  `);
   lines.push(`**Hashtags TikTok:** ${hashtags.map((h) => `#${h}`).join(', ')}  `);
   lines.push(`**Vídeos TikTok coletados:** ${totalTiktok}  `);
-  lines.push(`**Produtos Mercado Livre coletados:** ${totalML}  `);
   lines.push(`**Análise LLM:** ${llmEnabled ? `✅ Habilitada (${llmModelo})` : '⚠️ Desabilitada'}  `);
+  lines.push(`**Fornecedores Alibaba:** ${totalAlibabaFornecedores > 0 ? `✅ ${totalAlibabaFornecedores} encontrado(s)` : '—'}  `);
   lines.push('');
   lines.push('---');
   lines.push('');
@@ -286,12 +245,12 @@ async function generateReport(analyzedResults, mlResults = [], llmEnabled = fals
   if (llmEnabled) {
     lines.push('- [🚀 Produtos Viáveis para Importação Simplificada](#-produtos-viáveis-para-importação-simplificada)');
   }
+  if (totalAlibabaFornecedores > 0) {
+    lines.push('- [🏭 Fornecedores no Alibaba](#-fornecedores-no-alibaba)');
+  }
   lines.push('- [🏆 Top 5 Oportunidades de Revenda](#-top-5-oportunidades-de-revenda)');
   for (const hashtag of Object.keys(analyzedResults)) {
     lines.push(`- [#${hashtag}](#${hashtag})`);
-  }
-  if (totalML > 0) {
-    lines.push('- [📊 Tendências do Mercado Livre](#-tendências-do-mercado-livre)');
   }
   lines.push('- [Metodologia do Score](#metodologia-do-score)');
   lines.push('');
@@ -300,29 +259,28 @@ async function generateReport(analyzedResults, mlResults = [], llmEnabled = fals
 
   // ── Seção de importação simplificada (LLM) ────────────────────────────────
   if (llmEnabled) {
-    lines.push(buildImportacaoSection(mlResults, analyzedResults));
+    lines.push(buildImportacaoSection(analyzedResults));
     lines.push('---');
     lines.push('');
   }
-
+  // ── Seção de fornecedores Alibaba ────────────────────────────────────
+  if (totalAlibabaFornecedores > 0) {
+    lines.push(buildAlibabaSection(alibabaResultados));
+    lines.push('---');
+    lines.push('');
+  }
   // ── Top 5 TikTok ──────────────────────────────────────────────────────────
-  lines.push(buildTop5Section(analyzedResults, mlUrls));
+  lines.push(buildTop5Section(analyzedResults));
   lines.push('---');
   lines.push('');
 
-  // ── Seção por hashtag ─────────────────────────────────────────────────────
+  // ── Seção por hashtag ──────────────────────────────────────────────────
   for (const [hashtag, videos] of Object.entries(analyzedResults)) {
-    lines.push(buildHashtagSection(hashtag, videos, mlUrls, llmEnabled));
+    lines.push(buildHashtagSection(hashtag, videos, llmEnabled));
     lines.push('---');
     lines.push('');
   }
 
-  // ── Seção Mercado Livre ───────────────────────────────────────────────────
-  if (totalML > 0) {
-    lines.push(buildMLSection(mlResults, llmEnabled));
-    lines.push('---');
-    lines.push('');
-  }
 
   // ── Metodologia ───────────────────────────────────────────────────────────
   lines.push('## Metodologia do Score\n');
@@ -340,7 +298,6 @@ async function generateReport(analyzedResults, mlResults = [], llmEnabled = fals
     lines.push('| Fonte | Peso Heurístico | Peso LLM |');
     lines.push('|---|---:|---:|');
     lines.push('| TikTok | 65% | 35% |');
-    lines.push('| Mercado Livre | 35% | 65% |');
     lines.push('');
     lines.push('### Critérios LLM — Importação\n');
     lines.push('| Regime | Critério |');
